@@ -1012,7 +1012,7 @@ export function rankThemeScreenshots(
 
 const readmeShotsCache = new Map<string, Promise<ScreenshotCandidate[]>>()
 
-/** Test hook: the cache is module-level and outlives component unmounts. */
+/** Clear README-derived media at the boundary of an accepted catalog generation. */
 export function resetScreenshotsCache(): void {
   readmeShotsCache.clear()
 }
