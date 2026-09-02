@@ -38,7 +38,10 @@ import { trialValidate } from './trial.ts'
 import { codeloadAllowBuildsKey, findCatalogEntryForLocal, findInstalledAlias, githubCommitOfTarget, githubTargetAtCommit, gitAllowBuildsKey, installTargetFor, isLocalSpec, NPM_NAME_RE, repoOfTarget, restoreBlockedByWorkspace, restoreTargetForLocal, workspaceProtocolDeps } from './sources.ts'
 import { failureDetail, groupConflictsByOwner, isStaleUpdate, parseIgnoredBuilds, parsePrepareNotAllowed, RELEASE_AGE_OVERRIDE, retargetCollections, validateAddedPlugins, withHoistRecovery } from './install.ts'
 import { asChannel, CHANNELS, DIST_TAG, resolveChannel, type Channel } from './channels.ts'
-import { asRegion, REGIONS, routesFor, setActiveRegion, type Region } from './regions.ts'
+import {
+  asRegion, githubProxyManaged, normalizeGithubProxy, REGIONS, routesFor, setActiveRegion,
+  setCustomGithubProxy, type Region,
+} from './regions.ts'
 import { resolveRegion } from './region-probe.ts'
 import { acceleratedTarget, resolveHeadCommit } from './accelerate.ts'
 import { updateNotesFor } from './changelog.ts'
@@ -289,6 +292,7 @@ export function mountMarketRoutes(
   // disabledSkins loads transparently) plus custom groups. Every toggle,
   // group, install and uninstall mutates this shared state and persists it.
   const marketState = readMarketState(activeProfileDir)
+  setCustomGithubProxy(marketState.githubProxy ?? null)
   const disabled = marketState.disabled
   const groups = marketState.groups
   const groupOrder = marketState.groupOrder
@@ -369,6 +373,8 @@ export function mountMarketRoutes(
     marketState.channel = fresh.channel
     marketState.region = fresh.region
     marketState.regionAuto = fresh.regionAuto
+    marketState.githubProxy = fresh.githubProxy
+    setCustomGithubProxy(fresh.githubProxy ?? null)
   }
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
@@ -2197,6 +2203,11 @@ export function mountMarketRoutes(
           // `region` on the client, so the routing table has one home and a
           // change to it cannot leave the two halves disagreeing.
           githubProxy: routesFor(region).githubProxy,
+          // New clients use per-service candidates. Keep githubProxy above
+          // for older bundles that understand only one prefix.
+          githubRoutes: routesFor(region).githubRoutes,
+          githubProxyCustom: marketState.githubProxy ?? null,
+          githubProxyManaged: githubProxyManaged(),
           // Whether the region was decided by the network check rather than
           // by the user — the card explains a choice it made on their behalf
           // exactly once, so nobody has to wonder why downloads moved.
@@ -3049,6 +3060,51 @@ export function mountMarketRoutes(
       },
     }),
 
+    /**
+     * Last-resort GitHub prefix for networks where every built-in route is
+     * unavailable. It is one escape hatch, not three service-level knobs;
+     * the service ordering itself remains maintained by the routing table.
+     */
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/github-proxy',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        if (githubProxyManaged()) {
+          sendJson(response, 409, { error: 'GitHub proxy is managed by DSHM_GITHUB_PROXY' })
+          return
+        }
+        try {
+          const body = (await readJsonBody(request)) as { proxy?: unknown }
+          const wanted = body.proxy === null ? null : normalizeGithubProxy(body.proxy)
+          if (body.proxy !== null && wanted === null) {
+            sendJson(response, 400, {
+              error: 'proxy must be an HTTPS prefix without credentials, query parameters, or a fragment',
+            })
+            return
+          }
+          setCustomGithubProxy(wanted)
+          marketState.githubProxy = wanted ?? undefined
+          writeMarketState(activeProfileDir, marketState)
+          invalidateUpdates()
+          logEvent('info', 'region', wanted === null
+            ? 'custom GitHub route cleared; automatic routing restored'
+            : 'custom GitHub route updated')
+          sendJson(response, 200, { ok: true, githubProxyCustom: wanted })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
     host.webServer.register({
       kind: 'exact',
       path: '/dsh-market/self-uninstall',
@@ -3624,14 +3680,14 @@ export function mountMarketRoutes(
               sendJson(response, 400, { error: 'unsupported source url' })
               return
             }
-            // Resolve GitHub HEAD through the region's mirror, when there is
-            // one, then let pnpm fetch the canonical commit-pinned target.
+            // Resolve GitHub HEAD through the region's available routes, then
+            // let pnpm fetch the canonical commit-pinned target.
             // Applied HERE, before the guards below, so every step downstream
             // reasons about the exact spec that will be installed. Returns
             // the original on any lookup failure (see accelerate.ts).
             const target = await acceleratedTarget(plainTarget, region)
             if (target !== plainTarget) {
-              logEvent('info', 'region', `${entry.name}: resolved HEAD through the ${region} mirror; downloading the commit-pinned GitHub target directly for pnpm integrity`)
+              logEvent('info', 'region', `${entry.name}: resolved HEAD through an available ${region} route; downloading the commit-pinned GitHub target directly for pnpm integrity`)
             }
             // Duplicate guard (#27): the same plugin listed under another name
             // (an alias entry pointing at the same repo) must never install
