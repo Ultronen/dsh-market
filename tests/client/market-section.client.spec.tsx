@@ -38,7 +38,13 @@ function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
     fetchCalls.push({ path, method, body })
     const payload =
-      route === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
+      route === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY, hostVersion: '0.1.2-alpha.2' }
+      : route === '/dsh-market/discovery-compatibility' ? {
+          hostVersion: '0.1.2-alpha.2',
+          plugins: Object.fromEntries(((body as { packages?: string[] } | undefined)?.packages ?? []).map(name => [name, {
+            status: 'unknown', basis: 'undeclared', requirement: null, declarations: [],
+          }])),
+        }
       : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [] }
       : route === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
       : route === '/dsh-market/updates' ? { updates: {} }
@@ -546,6 +552,75 @@ describe('MarketSection (jsdom)', () => {
       const names = screen.getAllByText(/^(dsh-loop|dsh-notify|whale-skin)$/).map(n => n.textContent)
       expect(names[0]).toBe('dsh-loop') // oldest first
     })
+  })
+
+  it('labels manifest requirements and filters only confirmed host mismatches', async () => {
+    const plugins = [
+      { ...REGISTRY.plugins[0], name: 'matches', npm: 'matches', url: 'https://github.com/a/matches' },
+      { ...REGISTRY.plugins[0], name: 'mismatch', npm: 'mismatch', url: 'https://github.com/a/mismatch' },
+      { ...REGISTRY.plugins[0], name: 'undeclared', npm: 'undeclared', url: 'https://github.com/a/undeclared' },
+      { ...REGISTRY.plugins[0], name: 'github-only', npm: null, url: 'https://github.com/a/github-only' },
+    ]
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'live',
+        hostVersion: '0.1.2-alpha.2',
+        registry: { ...REGISTRY, count: plugins.length, plugins },
+      },
+      '/dsh-market/discovery-compatibility': (body: any) => ({
+        hostVersion: '0.1.2-alpha.2',
+        plugins: Object.fromEntries(body.packages.map((name: string) => [name, name === 'undeclared'
+          ? { status: 'unknown', basis: 'undeclared', requirement: null, declarations: [] }
+          : {
+              status: name === 'mismatch' ? 'incompatible' : 'compatible',
+              basis: 'manifest',
+              requirement: '^0.1.2-alpha.2',
+              declarations: [{ kind: 'peer', package: '@deepseek-ai/dsh-tools', range: '^0.1.2-alpha.2' }],
+            }])),
+      }),
+    })
+
+    render(<MarketSection {...props()} />)
+    await screen.findByText('mismatch')
+    await screen.findAllByText(en.hostRequirement.replace('{0}', '^0.1.2-alpha.2'))
+    expect(screen.getByText(en.hostRequirementUndeclared)).toBeTruthy()
+    expect(screen.getByText(en.hostRequirementUnavailable)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    fireEvent.click(screen.getByRole('menuitem', {
+      name: en.hostCompatible.replace('{0}', '0.1.2-alpha.2'),
+    }))
+    await waitFor(() => {
+      expect(screen.queryByText('mismatch')).toBeNull()
+      expect(screen.getByText('matches')).toBeTruthy()
+      expect(screen.getByText('undeclared')).toBeTruthy()
+      expect(screen.getByText('github-only')).toBeTruthy()
+    })
+    expect(fetchCalls.some(call => call.path === '/dsh-market/discovery-compatibility'
+      && call.method === 'POST'
+      && Array.isArray((call.body as { packages?: unknown })?.packages))).toBe(true)
+  })
+
+  it('reports an unknown host version and does not enable a pretend compatibility filter', async () => {
+    stubFetch({
+      '/dsh-market/registry': { source: 'live', hostVersion: null, registry: REGISTRY },
+      '/dsh-market/discovery-compatibility': (body: any) => ({
+        hostVersion: null,
+        plugins: Object.fromEntries(body.packages.map((name: string) => [name, {
+          status: 'unknown',
+          basis: 'manifest',
+          requirement: '^0.1.2-alpha.2',
+          declarations: [{ kind: 'engine', range: '^0.1.2-alpha.2' }],
+        }])),
+      }),
+    })
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: en.filter }))
+    const unknown = screen.getByRole('menuitem', { name: en.hostUnknown })
+    fireEvent.click(unknown)
+    expect(screen.getByText('dsh-loop')).toBeTruthy()
+    expect(screen.queryByText(/Filtering for DSH/)).toBeNull()
   })
 
   it('the install dialog opens with Confirm/Cancel and closes on cancel', async () => {

@@ -36,7 +36,7 @@ export interface RegistryPlugin {
   name: string
   owner: string
   url: string
-  npm?: string
+  npm?: string | null
   tarball?: string | null
   /** One legacy category id or several category ids. */
   category: string | string[]
@@ -79,6 +79,17 @@ export interface Registry {
   categories: Record<string, LocalizedText>
   plugins: RegistryPlugin[]
 }
+
+/** Discovery-time verdict derived from a package's public npm manifest. */
+export interface HostCompatibility {
+  status: 'compatible' | 'incompatible' | 'unknown'
+  basis: 'manifest' | 'undeclared' | 'unavailable'
+  requirement: string | null
+  declarations: Array<{ kind: 'engine' | 'peer'; package?: string; range: string }>
+}
+
+/** npm package name -> discovery-time host verdict. */
+export type HostCompatibilityMap = Record<string, HostCompatibility>
 
 /** Profile dependency map: package name → install spec. */
 export type InstalledMap = Record<string, string>
@@ -307,6 +318,10 @@ export interface ListQuery {
   sort: string
   /** Keep only plugins published within the last N days; undefined = any time. */
   sinceDays?: number
+  /** Optional discovery metadata, keyed by the entry's npm package name. */
+  hostCompatibility?: HostCompatibilityMap
+  /** Hide only entries that are known to be incompatible; unknown stays visible. */
+  compatibleWithHost?: boolean
 }
 
 /**
@@ -390,7 +405,7 @@ function pluginRelevance(
 
   return Math.max(
     fieldRelevance(plugin, plugin.name, query, tokens, 700),
-    fieldRelevance(plugin, plugin.npm, query, tokens, 700),
+    fieldRelevance(plugin, plugin.npm ?? undefined, query, tokens, 700),
     fieldRelevance(plugin, plugin.owner, query, tokens, 400),
     fieldRelevance(plugin, preferredDescription, query, tokens, 280),
     ...otherDescriptions.map(value => fieldRelevance(plugin, value, query, tokens, 240)),
@@ -442,6 +457,8 @@ export function visiblePlugins(plugins: RegistryPlugin[], options: ListQuery): R
     const categories = pluginCategories(plugin)
     if (options.category !== 'all' && !categories.includes(options.category)) return []
     if (options.sinceDays !== undefined && !withinDays(plugin.added, options.sinceDays)) return []
+    if (options.compatibleWithHost === true && plugin.npm != null
+      && options.hostCompatibility?.[plugin.npm]?.status === 'incompatible') return []
     const relevance = query === '' ? 0 : pluginRelevance(plugin, query, tokens, options.lang, options.categories)
     return relevance === 0 && query !== '' ? [] : [{ plugin, relevance, index }]
   })
