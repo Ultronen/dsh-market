@@ -456,6 +456,21 @@
          background:var(--dsw-alias-bg-layer-2,#f3f4f6);color:var(--dsw-alias-label-tertiary,#8b93a1)}
 .metaTagOk{color:var(--dsw-alias-state-success-primary,#16a34a);
            background:color-mix(in srgb, var(--dsw-alias-state-success-primary,#16a34a) 10%, transparent)}
+/* Local-dev restore in the same status slot as 已是最新 — same pill as
+   .metaTag but clickable and never ellipsized. */
+.metaTagAction{font-family:inherit;font-size:11px;line-height:18px;font-weight:inherit;
+              cursor:pointer;border:none;flex-shrink:0;padding:1px 7px;border-radius:5px;
+              background:var(--dsw-alias-bg-layer-2,#f3f4f6);
+              color:var(--dsw-alias-label-secondary,#6b7280)}
+.metaTagAction:hover:not(:disabled){color:var(--dsw-alias-brand-primary,#4f6ef7)}
+.metaTagAction:disabled{opacity:.5;cursor:default}
+/* Installed-row header: title left, local-dev badge top-right. */
+.irowHead{display:flex;align-items:flex-start;gap:8px;min-width:0}
+.irowHead .irowName{flex:1 1 0;min-width:0}
+.irowDevTag{flex-shrink:0;border-radius:99px;padding:2px 8px;font-size:10px;line-height:14px;font-weight:600;
+            letter-spacing:0.02em;white-space:nowrap;cursor:default;user-select:none;
+            color:var(--dsw-alias-label-tertiary,#8b93a1);
+            background:color-mix(in srgb, var(--dsw-alias-brand-primary,#4f6ef7) 9%, var(--dsw-alias-bg-layer-2,#f3f4f6))}
 .nameLink{color:inherit;text-decoration:none}
 /* Installed-row title only. The version is a fact the row exists to state,
    so it never truncates; the name is the variable-length part and is the
@@ -548,7 +563,9 @@
 /* The status tag and Uninstall travel together: nowrap so they never split
    across lines, min-width:0 so the group can still shrink (the tag inside
    ellipsizes) rather than forcing the whole row wider (#242). */
-.irowTrailing{display:inline-flex;align-items:center;gap:8px;flex-wrap:nowrap;min-width:0}
+.irowTrailing{display:inline-flex;align-items:center;gap:8px;flex-wrap:nowrap;flex-shrink:0;min-width:0}
+.irowTrailing .metaTag{flex-shrink:1;min-width:0}
+.irowTrailing .metaTagAction{flex-shrink:0}
 .irowMissing{filter:grayscale(1);opacity:.5}
 .irow>.src,.irow>.owner{white-space:nowrap;flex-shrink:0}
 .irow button{white-space:nowrap;flex-shrink:0}

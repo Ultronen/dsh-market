@@ -2475,9 +2475,9 @@ describe('local-dev restore', () => {
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     expect(screen.queryByRole('button', { name: en.restore })).toBeNull()
     fireEvent.click(await screen.findByRole('button', { name: en.restoreOnline }))
-    expect(await screen.findByText(en.restoreHint)).toBeTruthy()
+    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: en.restoreContinue }))
+    fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
     await waitFor(() => {
       expect(fetchCalls.some(call =>
         call.path === '/dsh-market/update'
@@ -2520,7 +2520,7 @@ describe('local-dev restore', () => {
     expect(fetchCalls.some(call => call.body?.restore === true)).toBe(false)
   })
 
-  it('asks in the red banner before swapping a linked plugin to the catalog', async () => {
+  it('asks in a modal before swapping a linked plugin to the catalog', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },
       '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'linked', version: '1.0.0', updateAvailable: false } } },
@@ -2531,10 +2531,12 @@ describe('local-dev restore', () => {
     fireEvent.click(screen.getByRole('button', { name: /Installed/ }))
     expect(await screen.findByRole('button', { name: en.uninstall })).toBeTruthy()
     expect(await screen.findByText(en.linkedDev)).toBeTruthy()
-    fireEvent.click(await screen.findByRole('button', { name: en.restore }))
-    expect(await screen.findByText(en.restoreHint)).toBeTruthy()
+    expect(screen.getByRole('status', { name: en.linkedDev })).toBeTruthy()
+    const restoreBtn = await screen.findByRole('button', { name: en.restore })
+    fireEvent.click(restoreBtn)
+    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: en.restoreContinue }))
+    fireEvent.click(screen.getByRole('button', { name: en.restoreProceed }))
     await waitFor(() => {
       expect(fetchCalls.some(call =>
         call.path === '/dsh-market/update' && call.body?.name === 'dsh-loop' && call.body?.restore === true,
@@ -2542,7 +2544,7 @@ describe('local-dev restore', () => {
     })
   })
 
-  it('does not arm continue when the linked plugin is not in the catalog', async () => {
+  it('does not offer restore when the linked plugin is not in the catalog', async () => {
     stubFetch({
       '/dsh-market/installed': { profile: 'web', installed: { 'mystery-plug': 'link:../mystery' }, live: [] },
       '/dsh-market/updates': { updates: { 'mystery-plug': { kind: 'linked', updateAvailable: false } } },
@@ -2552,8 +2554,81 @@ describe('local-dev restore', () => {
     expect(await screen.findByText('mystery-plug')).toBeTruthy()
     fireEvent.click(await screen.findByRole('button', { name: en.restore }))
     expect(await screen.findByText(en.restoreNoCatalog)).toBeTruthy()
-    expect(screen.queryByRole('button', { name: en.restoreContinue })).toBeNull()
+    expect(screen.queryByRole('button', { name: en.restoreProceed })).toBeNull()
     expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+    fireEvent.click(screen.getByRole('button', { name: en.gotIt }))
+    expect(screen.queryByText(en.restoreNoCatalog)).toBeNull()
+    expect(screen.getByRole('button', { name: en.uninstall })).toBeTruthy()
+  })
+
+  it('does not offer restore when the linked fork disagrees with the only same-named catalog entry', async () => {
+    stubFetch({
+      '/dsh-market/registry': {
+        source: 'snapshot',
+        registry: {
+          updated: '', count: 1,
+          categories: { tools: { en: 'Tools', zh: '工具' } },
+          plugins: [
+            {
+              name: 'dsh-humanizer', owner: 'lynote-ai',
+              url: 'https://github.com/lynote-ai/dsh-humanizer',
+              category: 'tools', npm: 'dsh-humanizer', stars: 1,
+              added: '2026-01-01', description: { en: 'Catalog copy', zh: '目录版' }, install: '',
+            },
+          ],
+        },
+      },
+      '/dsh-market/installed': {
+        profile: 'web',
+        installed: { 'dsh-humanizer': 'link:../dsh-humanizer' },
+        live: [],
+        repoIdentities: { 'dsh-humanizer': ['handsomeliu/dsh-humanizer'] },
+      },
+      '/dsh-market/updates': { updates: { 'dsh-humanizer': { kind: 'linked', updateAvailable: false } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.restore }))
+    expect(await screen.findByText(en.restoreNoMatch)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: en.restoreProceed })).toBeNull()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+    expect(screen.queryByText('Catalog copy')).toBeNull()
+  })
+
+  it('dismissing the restore modal does not call update', async () => {
+    stubFetch({
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-loop': 'link:../dsh-loop' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-loop': { kind: 'linked', updateAvailable: false } } },
+      '/dsh-market/update': { ok: true },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    fireEvent.click(await screen.findByRole('button', { name: en.restore }))
+    expect(await screen.findByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+    expect(screen.queryByText((content: string) => content.includes(en.restoreHint.slice(0, 32)))).toBeNull()
+    expect(fetchCalls.some(call => call.path === '/dsh-market/update')).toBe(false)
+  })
+
+  it('deprecated installed rows still show replacement actions beside restore', async () => {
+    const DEPRECATED_WITH_REPLACEMENT = {
+      updated: '', count: 2,
+      categories: { tools: { en: 'Tools', zh: '工具' } },
+      plugins: [
+        { name: 'dsh-old', owner: 'alice', url: 'https://github.com/alice/dsh-old', category: 'tools', npm: 'dsh-old', stars: 5, added: '2026-01-01', description: { en: 'Legacy', zh: '旧' }, install: '', deprecated: true, replacement: 'dsh-new' },
+        { name: 'dsh-new', owner: 'bob', url: 'https://github.com/bob/dsh-new', category: 'tools', npm: 'dsh-new', stars: 20, added: '2026-08-01', description: { en: 'Modern', zh: '新' }, install: '' },
+      ],
+    }
+    stubFetch({
+      '/dsh-market/registry': { source: 'snapshot', registry: DEPRECATED_WITH_REPLACEMENT },
+      '/dsh-market/installed': { profile: 'web', installed: { 'dsh-old': 'link:../dsh-old' }, live: [] },
+      '/dsh-market/updates': { updates: { 'dsh-old': { kind: 'linked', updateAvailable: false } } },
+    })
+    render(<MarketSection {...props()} />)
+    fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
+    expect(await screen.findByRole('button', { name: en.restore })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.viewReplacement })).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.installReplacement })).toBeTruthy()
     expect(screen.getByRole('button', { name: en.uninstall })).toBeTruthy()
   })
 
@@ -2607,7 +2682,7 @@ describe('local-dev restore', () => {
     render(<MarketSection {...props()} />)
     fireEvent.click(await screen.findByRole('button', { name: /Installed/ }))
     fireEvent.click(await screen.findByRole('button', { name: en.restore }))
-    fireEvent.click(await screen.findByRole('button', { name: en.restoreContinue }))
+    fireEvent.click(await screen.findByRole('button', { name: en.restoreProceed }))
     expect(await screen.findByText(re(en.buildsSkipped))).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: en.approveBuilds }))
     await waitFor(() => {
