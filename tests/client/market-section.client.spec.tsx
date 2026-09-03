@@ -40,10 +40,6 @@ function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
     fetchCalls.push({ path, method, body })
     const payload =
-<<<<<<< HEAD
-      route === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
-      : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [] }
-=======
       route === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY, hostVersion: '0.1.2-alpha.2' }
       : route === '/dsh-market/discovery-compatibility' ? {
           hostVersion: '0.1.2-alpha.2',
@@ -51,8 +47,7 @@ function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
             status: 'unknown', basis: 'undeclared', requirement: null, declarations: [],
           }])),
         }
-      : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [] }
->>>>>>> origin/main
+      : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [] }
       : route === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
       : route === '/dsh-market/updates' ? { updates: {} }
       : route === '/dsh-market/toggle' ? { ok: true, disabled: [], live: [], activation: {} }

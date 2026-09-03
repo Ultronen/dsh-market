@@ -374,12 +374,8 @@ vi.mock('../src/hot.ts', () => ({
   readMarketState: () => ({
     disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder,
     channel: hot.channel, region: hot.region, regionAuto: hot.regionAuto,
-<<<<<<< HEAD
-    notes: hot.notes, favorites: hot.favorites,
-=======
     githubProxy: hot.githubProxy,
-    notes: hot.notes,
->>>>>>> origin/main
+    notes: hot.notes, favorites: hot.favorites,
   }),
   // Carries `channel` because the real one does. A stand-in that silently
   // drops a field cannot fail when the code under test forgets to persist
@@ -388,12 +384,8 @@ vi.mock('../src/hot.ts', () => ({
   writeMarketState: (_dir: string, state: {
     disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]
     channel?: 'stable' | 'beta' | 'dev'; region?: 'global' | 'china'; regionAuto?: true
-<<<<<<< HEAD
-    notes?: Record<string, string>; favorites?: string[]
-=======
     githubProxy?: string
-    notes?: Record<string, string>
->>>>>>> origin/main
+    notes?: Record<string, string>; favorites?: string[]
   }) => {
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups

@@ -217,17 +217,14 @@ export interface MarketState {
    * downloads oddly.
    */
   regionAuto?: boolean
-<<<<<<< HEAD
   /**
    * Catalog entry URLs the user bookmarked for later install (#414).
    * Keys are registry `url` strings, not package names — favorites are a
    * pre-install list, unlike groups/notes which target installed packages.
    */
   favorites?: string[]
-=======
   /** User-supplied HTTPS prefix used when the built-in GitHub routes fail. */
   githubProxy?: string
->>>>>>> origin/main
 }
 
 /** Unique non-empty strings in `value`, order preserved. */
@@ -300,11 +297,8 @@ export function readMarketState(profileDir: string): MarketState {
       // Only meaningful beside a region, and only when true: a stray flag
       // with no region would promise a notice about a choice nobody made.
       regionAuto: state.regionAuto === true && asRegion(state.region) !== null ? true : undefined,
-<<<<<<< HEAD
       favorites: favoriteUrls(state.favorites),
-=======
       ...(githubProxy === null ? {} : { githubProxy }),
->>>>>>> origin/main
     }
   } catch {
     return { disabled: new Set(), groups: {}, groupOrder: [], notes: {}, favorites: [] }
@@ -352,15 +346,12 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const regionAuto = Object.prototype.hasOwnProperty.call(state, 'regionAuto')
     ? state.regionAuto
     : onDisk.regionAuto
-<<<<<<< HEAD
   const favorites = state.favorites ?? onDisk.favorites ?? []
-=======
   // This field does have a clear action ("restore automatic"). As with
   // regionAuto, omission preserves while an explicit undefined removes it.
   const githubProxy = Object.prototype.hasOwnProperty.call(state, 'githubProxy')
     ? state.githubProxy
     : onDisk.githubProxy
->>>>>>> origin/main
   writeFileSync(stateFile(profileDir), JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,

@@ -377,12 +377,9 @@ export function mountMarketRoutes(
     marketState.channel = fresh.channel
     marketState.region = fresh.region
     marketState.regionAuto = fresh.regionAuto
-<<<<<<< HEAD
     marketState.favorites = fresh.favorites
-=======
     marketState.githubProxy = fresh.githubProxy
     setCustomGithubProxy(fresh.githubProxy ?? null)
->>>>>>> origin/main
   }
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
