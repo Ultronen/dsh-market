@@ -20,6 +20,7 @@ import {
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
 import { dshHostInfo } from './dsh-install.ts'
+import { deriveHostCompatibility, DiscoveryManifestIndex } from './discovery-compatibility.ts'
 import { configurePersistentLog, exportLogs, logEvent, readPersistentLog } from './log.ts'
 import { marketFetch } from './net.ts'
 import { diagnosePackageManifests } from './diagnostics.ts'
@@ -30,7 +31,7 @@ import {
 import { addProfileBundle, dropFromManifest, hasLoadableEntry, INBOX_BUNDLES, isDshProfileName, profileDir, readInstalled, readInstalledManifest, readInstalledRepoEvidence, readInstalledVersion, readLockCommits, readProfileBundles, readProfileManifestSnapshot, removeProfileBundle, restoreProfileManifest, setAllowBuilds, type ProfileManifestSnapshot } from './profile.ts'
 import { assessProfile, classifyPeer, introducedDuplicateNames, introducedRisks, type CompatibilityRisk } from './compatibility.ts'
 import { runningAgentIds, type AgentsLookup } from './agents.ts'
-import { analyzeProfile, type DuplicateName } from './check.ts'
+import { analyzeProfile, corePackageNames, type DuplicateName } from './check.ts'
 import { applyBundleOrder, mergeOrder, readBundleRules, readBundleStack, validateOrder } from './order.ts'
 import { applyPreset, deletePreset, listPresets, previewPreset, savePreset } from './presets.ts'
 import { createProfileSnapshot, DEFAULT_MAX_SNAPSHOTS, deleteSnapshot, listSnapshots, restoreSnapshot } from './snapshot.ts'
@@ -251,6 +252,9 @@ export function mountMarketRoutes(
   }
   const activeProfileDir = profileDir(config.profile, config.profileDirectory)
   const persistentLogFile = join(activeProfileDir, '.dsh-market', 'log.ndjson')
+  const discoveryManifests = new DiscoveryManifestIndex(
+    join(activeProfileDir, '.dsh-market', 'discovery-compatibility-v1.json'),
+  )
   configurePersistentLog(persistentLogFile)
   let agentGuardUnavailableLogged = false
   /** Running-agent ids for the mutation gate; logs once when the host exposes no agents service. */
@@ -1484,7 +1488,11 @@ export function mountMarketRoutes(
         }
         try {
           try {
-            sendJson(response, 200, { registry: await loadRegistry() })
+            const registry = await loadRegistry()
+            sendJson(response, 200, {
+              registry,
+              hostVersion: dshHostInfo()?.version ?? null,
+            })
           } catch (error) {
             // Say what went wrong. The market used to substitute a bundled
             // copy here, so an unreachable registry looked exactly like a
@@ -1493,6 +1501,51 @@ export function mountMarketRoutes(
             logEvent('warn', 'registry', `catalog fetch failed: ${message}`)
             sendJson(response, 502, { error: message })
           }
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/discovery-compatibility',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        let body: unknown
+        try {
+          body = await readJsonBody(request, 32 * 1024)
+        } catch (error) {
+          sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+          return
+        }
+        const requested = body !== null && typeof body === 'object' && !Array.isArray(body)
+          ? (body as { packages?: unknown }).packages
+          : undefined
+        if (!Array.isArray(requested) || requested.length > 64
+          || !requested.every(name => typeof name === 'string' && NPM_NAME_RE.test(name))) {
+          sendJson(response, 400, { error: 'packages must be an array of at most 64 npm package names' })
+          return
+        }
+        const packages = [...new Set(requested as string[])]
+        try {
+          const host = dshHostInfo()
+          const hostVersion = host?.version ?? null
+          const hostPackages = corePackageNames(host?.directory ?? null)
+          const facts = await discoveryManifests.lookup(packages, routesFor(region).npmRegistry)
+          const plugins = Object.fromEntries(packages.map(name => [
+            name,
+            deriveHostCompatibility(facts[name] ?? null, hostVersion, hostPackages),
+          ]))
+          sendJson(response, 200, { hostVersion, plugins })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
         }
