@@ -20,7 +20,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { asChannel, type Channel } from './channels.ts'
-import { asRegion, type Region } from './regions.ts'
+import { asRegion, normalizeGithubProxy, type Region } from './regions.ts'
 import { logEvent } from './log.ts'
 
 interface HotRow {
@@ -217,6 +217,8 @@ export interface MarketState {
    * downloads oddly.
    */
   regionAuto?: boolean
+  /** User-supplied HTTPS prefix used when the built-in GitHub routes fail. */
+  githubProxy?: string
 }
 
 /** Unique non-empty strings in `value`, order preserved. */
@@ -251,6 +253,7 @@ export function readMarketState(profileDir: string): MarketState {
       channel?: unknown
       region?: unknown
       regionAuto?: unknown
+      githubProxy?: unknown
       notes?: unknown
     }
     const disabled = uniqueStrings(state.disabled !== undefined ? state.disabled : state.disabledSkins)
@@ -268,6 +271,7 @@ export function readMarketState(profileDir: string): MarketState {
         if (typeof text === 'string' && text.trim() !== '') notes[name] = text.slice(0, MAX_NOTE)
       }
     }
+    const githubProxy = normalizeGithubProxy(state.githubProxy)
     return {
       disabled: new Set(disabled),
       groups,
@@ -278,6 +282,7 @@ export function readMarketState(profileDir: string): MarketState {
       // Only meaningful beside a region, and only when true: a stray flag
       // with no region would promise a notice about a choice nobody made.
       regionAuto: state.regionAuto === true && asRegion(state.region) !== null ? true : undefined,
+      ...(githubProxy === null ? {} : { githubProxy }),
     }
   } catch {
     return { disabled: new Set(), groups: {}, groupOrder: [], notes: {} }
@@ -325,6 +330,11 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
   const regionAuto = Object.prototype.hasOwnProperty.call(state, 'regionAuto')
     ? state.regionAuto
     : onDisk.regionAuto
+  // This field does have a clear action ("restore automatic"). As with
+  // regionAuto, omission preserves while an explicit undefined removes it.
+  const githubProxy = Object.prototype.hasOwnProperty.call(state, 'githubProxy')
+    ? state.githubProxy
+    : onDisk.githubProxy
   writeFileSync(stateFile(profileDir), JSON.stringify({
     disabled: [...state.disabled],
     groups: state.groups,
@@ -338,6 +348,7 @@ export function writeMarketState(profileDir: string, state: MarketState): void {
     // the probe run, so writing a default here would mean it never does.
     ...(region === undefined ? {} : { region }),
     ...(regionAuto === true ? { regionAuto: true } : {}),
+    ...(githubProxy === undefined ? {} : { githubProxy }),
   }))
 }
 
