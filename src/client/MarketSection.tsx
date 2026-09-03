@@ -43,7 +43,7 @@ import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
   api, applyGithubRouting, avatarColor, catalogEntryForInstalled, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, rememberGithubRoute, resetScreenshotsCache, resolveCatalogRestore, safeScreenshots, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -615,7 +615,7 @@ function measureThemeCandidates(candidates: ScreenshotCandidate[]): Promise<Scre
 const measuredThemePreviewTasks = new Map<string, Promise<string[]>>()
 const measuredThemePreviewResults = new Map<string, string[]>()
 
-/** Test hook and an explicit boundary for this page-lifetime media cache. */
+/** Clear measured theme media at the boundary of an accepted catalog generation. */
 export function resetThemePreviewCache(): void {
   measuredThemePreviewTasks.clear()
   measuredThemePreviewResults.clear()
@@ -1633,6 +1633,10 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .then((body) => {
         if (body.registry === undefined) throw new Error('the catalog response carried no data')
+        if (body.registry.updated !== cachedRegistry?.updated) {
+          resetScreenshotsCache()
+          resetThemePreviewCache()
+        }
         cachedRegistry = body.registry
         setData(body.registry)
         setHostVersion(typeof body.hostVersion === 'string' ? body.hostVersion : null)
