@@ -1,5 +1,5 @@
 /**
- * The Market settings section: Discover / Themes / Installed tabs over the
+ * The Market settings section: Discover / Favorites / Themes / Installed tabs over the
  * /dsh-market/* host routes, with install/update/uninstall flows and the
  * pending-restart bookkeeping in sessionStorage.
  */
@@ -42,8 +42,13 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
+<<<<<<< HEAD
+  api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, pluginsForFavorites, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, staleFavoriteUrls, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+=======
   api, applyGithubRouting, avatarColor, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
   formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, rememberGithubRoute, safeScreenshots, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+>>>>>>> origin/main
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -1016,6 +1021,33 @@ function GithubRepoMark({ size = 12, className }: { size?: number; className?: s
   )
 }
 
+/** Bookmark toggle on catalog cards (#414). Outline when off, filled when on —
+ * deliberately not a star, which the byline already uses for GitHub popularity. */
+function BookmarkMark({ size = 14, filled = false, className }: { size?: number; filled?: boolean; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 16 16"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+      className={className}
+    >
+      {filled
+        ? <path d="M4 1.5h8a1 1 0 0 1 1 1v11.8a.5.5 0 0 1-.78.41L8 12.2 3.78 14.71A.5.5 0 0 1 3 14.3V2.5a1 1 0 0 1 1-1z" fill="currentColor" />
+        : (
+            <path
+              d="M4 1.5h8a1 1 0 0 1 1 1v11.8a.5.5 0 0 1-.78.41L8 12.2 3.78 14.71A.5.5 0 0 1 3 14.3V2.5a1 1 0 0 1 1-1z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.25"
+              strokeLinejoin="round"
+            />
+          )}
+    </svg>
+  )
+}
+
 /**
  * Module-scope caches so re-entering the section renders instantly instead
  * of refetching and rebuilding from a spinner (#30 by @StarsTom). Module
@@ -1165,6 +1197,7 @@ export function MarketSection(props: MarketSectionProps) {
   const [q, setQ] = useState('')
   /** Per-tab searches stay independent: discover / themes / installed. */
   const [qThemes, setQThemes] = useState('')
+  const [qFavorites, setQFavorites] = useState('')
   const [qInstalled, setQInstalled] = useState('')
   const [cat, setCat] = useState('all')
   // FLAQ Desktop supplies this for onboarding/feature navigation; upstream dsh web omits it, so ordinary web opens intentionally leave this effect idle.
@@ -1239,6 +1272,10 @@ export function MarketSection(props: MarketSectionProps) {
   const updateIdleStrikes = useRef(0)
   const [doneUrls, setDoneUrls] = useState<string[]>([])
   const [installError, setInstallError] = useState<string | null>(null)
+  const [favoriteError, setFavoriteError] = useState<string | null>(null)
+  /** Ignores out-of-order /dsh-market/favorite responses after a newer toggle. */
+  const favoriteOpGen = useRef(0)
+  const [clearingStale, setClearingStale] = useState(false)
   /** The notes payload the server answers with, verbatim (see /changelog). */
   type NoteRelease = { tag: string | null; name: string | null; publishedAt: string | null; url: string | null; body: string }
   type NoteCommit = { sha: string; message: string; date: string | null }
@@ -1307,6 +1344,7 @@ export function MarketSection(props: MarketSectionProps) {
   /** Stable onDone for the export Toast — a fresh closure per render would
    * reset the Toast's auto-dismiss timer on every parent re-render. */
   const exportToastDone = useCallback(() => setExportState('idle'), [])
+  const favoriteErrorDone = useCallback(() => setFavoriteError(null), [])
   const [updates, setUpdates] = useState<Record<string, UpdateStatus>>({})
   /** Update reminders dismissed for this host boot. The Installed tab still
    * shows these plugins and their update actions; only proactive prompts use
@@ -1341,6 +1379,8 @@ export function MarketSection(props: MarketSectionProps) {
   const [disabledNames, setDisabledNames] = useState<string[]>([])
   /** The user's own note per plugin (#347): package name → text. */
   const [notes, setNotes] = useState<Record<string, string>>({})
+  /** Catalog URLs bookmarked for later install (#414). */
+  const [favoriteUrls, setFavoriteUrls] = useState<string[]>([])
   /** Rows the user asked to show the AUTHOR's description on, despite a note. */
   const [showTheirs, setShowTheirs] = useState<string[]>([])
   /** The row whose note is being edited, and the text in the box. */
@@ -1469,6 +1509,9 @@ export function MarketSection(props: MarketSectionProps) {
   const [themeSortField, setThemeSortField] = useState<SortField>('downloads')
   const [themeSortDir, setThemeSortDir] = useState<SortDir>('desc')
   const [themeTimeRange, setThemeTimeRange] = useState<TimeRange>('all')
+  const [favSortField, setFavSortField] = useState<SortField>('downloads')
+  const [favSortDir, setFavSortDir] = useState<SortDir>('desc')
+  const [favTimeRange, setFavTimeRange] = useState<TimeRange>('all')
   /** WebDAV provider-preset dropdown (primitives Menu). */
   const [presetOpen, setPresetOpen] = useState(false)
   /** Install-command disclosure inside the confirm dialog. */
@@ -1518,6 +1561,7 @@ export function MarketSection(props: MarketSectionProps) {
         if (Array.isArray(body.patchDisabled)) setPatchDisabledNames(body.patchDisabled)
         if (body.groups && typeof body.groups === 'object') setGroups(body.groups)
         if (Array.isArray(body.groupOrder)) setGroupOrder(body.groupOrder)
+        if (Array.isArray(body.favorites)) setFavoriteUrls(body.favorites.filter((url: unknown): url is string => typeof url === 'string'))
         setInstalledBundles(Array.isArray(body.bundles) ? body.bundles.filter((name: unknown): name is string => typeof name === 'string') : [])
         if (body.activation && typeof body.activation === 'object') setActivations(body.activation)
         const findings = body.diagnostics?.schema === 'dsh-market/diagnostics/v1'
@@ -1540,6 +1584,7 @@ export function MarketSection(props: MarketSectionProps) {
   )
   /** Lookup set for the persisted disable list (#60). */
   const disabledSet = useMemo(() => new Set(disabledNames), [disabledNames])
+  const favoriteUrlSet = useMemo(() => new Set(favoriteUrls), [favoriteUrls])
   /** Effective switch state: market disable list ∪ user-patch-layer disables. */
   const effectiveDisabledSet = useMemo(
     () => new Set([...disabledNames, ...patchDisabledNames]),
@@ -1901,7 +1946,11 @@ export function MarketSection(props: MarketSectionProps) {
     const el = bodyRef.current
     if (el !== null) el.scrollTop = 0
     setShowTop(false)
+<<<<<<< HEAD
+  }, [tab, q, cat, sortField, sortDir, timeRange, qThemes, themeSortField, themeSortDir, themeTimeRange, qFavorites, favSortField, favSortDir, favTimeRange, qInstalled, installedView])
+=======
   }, [tab, q, cat, sortField, sortDir, timeRange, compatibleWithHost, qThemes, themeSortField, themeSortDir, themeTimeRange, qInstalled, installedView])
+>>>>>>> origin/main
 
   const plugins = useMemo(
     () => (data === null ? [] : visiblePlugins(data.plugins, {
@@ -1949,6 +1998,39 @@ export function MarketSection(props: MarketSectionProps) {
     themePlugins.length, [qThemes, themeSortField, themeSortDir, themeTimeRange], scrollToTop)
   const themePagePlugins = themePlugins.slice(
     (themePagination.currentPage - 1) * themePagination.pageSize, themePagination.currentPage * themePagination.pageSize)
+
+  const favoriteListed = useMemo(
+    () => (data === null ? [] : pluginsForFavorites(data.plugins, favoriteUrlSet, {
+      query: qFavorites, lang, categories: data.categories,
+      sort: `${favSortField}-${favSortDir}`,
+      sinceDays: favTimeRange === 'all' ? undefined : TIME_RANGE_DAYS[favTimeRange],
+    })),
+    [data, qFavorites, lang, favoriteUrlSet, favSortField, favSortDir, favTimeRange])
+  const favoritePlugins = useMemo(
+    () => favoriteListed.filter(p => !pluginCategories(p).includes('theme')),
+    [favoriteListed])
+  const favoriteThemes = useMemo(
+    () => favoriteListed.filter(p => pluginCategories(p).includes('theme')),
+    [favoriteListed])
+  const favResetDeps = [qFavorites, favSortField, favSortDir, favTimeRange] as const
+  const favoritePluginPagination = usePagination(
+    favoritePlugins.length, favResetDeps, scrollToTop)
+  const favoriteThemePagination = usePagination(
+    favoriteThemes.length, favResetDeps, scrollToTop)
+  const favoritePagePlugins = favoritePlugins.slice(
+    (favoritePluginPagination.currentPage - 1) * favoritePluginPagination.pageSize,
+    favoritePluginPagination.currentPage * favoritePluginPagination.pageSize)
+  const favoritePageThemes = favoriteThemes.slice(
+    (favoriteThemePagination.currentPage - 1) * favoriteThemePagination.pageSize,
+    favoriteThemePagination.currentPage * favoriteThemePagination.pageSize)
+  const favoriteStale = useMemo(
+    () => (data === null ? [] : staleFavoriteUrls(favoriteUrls, data.plugins)),
+    [data, favoriteUrls])
+  const favoritesAllStale = favoriteUrls.length > 0
+    && favoriteStale.length === favoriteUrls.length
+    && qFavorites.trim() === ''
+  /** Tab badge counts catalog-visible bookmarks once the registry is loaded. */
+  const favoriteTabCount = data === null ? favoriteUrls.length : favoriteListed.length
 
   /** Download a host endpoint as a file — primitives Button can't be an <a download>.
    * Prefers the server's Content-Disposition filename (e.g. the timestamped
@@ -2432,6 +2514,96 @@ export function MarketSection(props: MarketSectionProps) {
       })
       .catch(error => setInstallError(String(error)))
   }, [])
+
+  const toggleFavorite = useCallback((url: string) => {
+    const gen = ++favoriteOpGen.current
+    const favorited = !favoriteUrlSet.has(url)
+    const previous = favoriteUrls
+    setFavoriteError(null)
+    setFavoriteUrls((list) => {
+      if (favorited) return list.includes(url) ? list : [...list, url]
+      return list.filter(entry => entry !== url)
+    })
+    fetch(api('/dsh-market/favorite'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url, favorited }),
+    })
+      .then(async (res) => {
+        const text = await res.text()
+        let body: { ok?: unknown; favorites?: unknown; error?: unknown } | null = null
+        if (text !== '') {
+          try { body = JSON.parse(text) as { ok?: unknown; favorites?: unknown; error?: unknown } } catch { /* non-JSON */ }
+        }
+        return { status: res.status, body }
+      })
+      .then(({ status, body }) => {
+        if (gen !== favoriteOpGen.current) return
+        if (status === 200 && body?.ok === true && Array.isArray(body.favorites)) {
+          setFavoriteUrls(body.favorites.filter((entry: unknown): entry is string => typeof entry === 'string'))
+          return
+        }
+        setFavoriteUrls(previous)
+        if (body === null && (status === 404 || status === 405)) {
+          setFavoriteError(t('favoriteUnavailable'))
+          return
+        }
+        if (status === 409) {
+          setFavoriteError(t('favoriteBusy'))
+          return
+        }
+        setFavoriteError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
+      })
+      .catch((error: unknown) => {
+        if (gen !== favoriteOpGen.current) return
+        setFavoriteUrls(previous)
+        setFavoriteError(String(error))
+      })
+  }, [favoriteUrlSet, favoriteUrls, t])
+
+  const clearStaleFavorites = useCallback(() => {
+    if (favoriteStale.length === 0) return
+    const gen = ++favoriteOpGen.current
+    const stale = favoriteStale
+    const previous = favoriteUrls
+    setFavoriteError(null)
+    setClearingStale(true)
+    setFavoriteUrls(list => list.filter(url => !stale.includes(url)))
+    void (async () => {
+      try {
+        let latest: string[] | null = null
+        for (const url of stale) {
+          const res = await fetch(api('/dsh-market/favorite'), {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ url, favorited: false }),
+          })
+          const text = await res.text()
+          let body: { ok?: unknown; favorites?: unknown; error?: unknown } | null = null
+          if (text !== '') {
+            try { body = JSON.parse(text) as { ok?: unknown; favorites?: unknown; error?: unknown } } catch { /* non-JSON */ }
+          }
+          if (res.status === 200 && body?.ok === true && Array.isArray(body.favorites)) {
+            latest = body.favorites.filter((entry: unknown): entry is string => typeof entry === 'string')
+            continue
+          }
+          if (gen !== favoriteOpGen.current) return
+          setFavoriteUrls(previous)
+          if (res.status === 409) setFavoriteError(t('favoriteBusy'))
+          else setFavoriteError(typeof body?.error === 'string' ? body.error : t('favoriteFailed'))
+          return
+        }
+        if (gen !== favoriteOpGen.current) return
+        if (latest !== null) setFavoriteUrls(latest)
+      } catch (error: unknown) {
+        if (gen !== favoriteOpGen.current) return
+        setFavoriteUrls(previous)
+        setFavoriteError(String(error))
+      } finally {
+        if (gen === favoriteOpGen.current) setClearingStale(false)
+      }
+    })()
+  }, [favoriteStale, favoriteUrls, t])
 
   const clearPendingRefresh = useCallback((name: string) => {
     setHotNames(names => names.filter(entry => entry !== name))
@@ -2979,6 +3151,23 @@ export function MarketSection(props: MarketSectionProps) {
       ? data?.plugins.find(r => r.name === p.replacement)
       : undefined
 
+  const renderFavoriteControl = (url: string) => {
+    const favorited = favoriteUrlSet.has(url)
+    return (
+      <Tooltip label={favorited ? t('favoriteRemove') : t('favoriteAdd')} side="top">
+        <button
+          type="button"
+          className={favorited ? `${css.favoriteBtn} ${css.favoriteOn}` : css.favoriteBtn}
+          aria-pressed={favorited}
+          aria-label={favorited ? t('favoriteRemove') : t('favoriteAdd')}
+          onClick={() => toggleFavorite(url)}
+        >
+          <BookmarkMark filled={favorited} />
+        </button>
+      </Tooltip>
+    )
+  }
+
   const pluginCard = (p: RegistryPlugin) => {
     const desc = (p.description && (p.description[lang] || p.description.en)) || ''
     const done = doneUrls.includes(p.url) || hotUrls.includes(p.url)
@@ -3088,13 +3277,12 @@ export function MarketSection(props: MarketSectionProps) {
               date/tag pair alone was long enough in English to wrap onto its
               own line, splitting one card's footer into two visual rows. */}
           <span className={css.grow} />
-          {/* No comment count here. Showing one would mean asking giscus about
-              every card on the page just to render a number, and a row of
-              zeroes reads as "nobody uses these" on a catalog where almost
-              nothing has been commented on yet. */}
-          <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
-            {t('comments')}
-          </button>
+          <span className={css.footActions}>
+            {renderFavoriteControl(p.url)}
+            <button type="button" className={css.commentsLink} onClick={() => setCommentsFor(p)}>
+              {t('comments')}
+            </button>
+          </span>
         </div>
         {busy && (
           <div className={css.progress}>
@@ -3191,6 +3379,9 @@ export function MarketSection(props: MarketSectionProps) {
           )}
 
           <div className={css.themeCardFooter}>
+            <span className={css.footActions}>
+              {renderFavoriteControl(p.url)}
+            </span>
             {instName === null && (
               <span className={css.themeLifecycle}>{done ? t('installedBadge') : t('notInstalled')}</span>
             )}
@@ -3455,6 +3646,10 @@ export function MarketSection(props: MarketSectionProps) {
         <div className={css.tabs}>
           <button className={tab === 'discover' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('discover')}>{t('tabDiscover')}</button>
           {themeSnap !== null && <button className={tab === 'themes' ? `${css.tab} ${css.on}` : css.tab} onClick={() => setTab('themes')}>{t('tabThemes')}</button>}
+          <button
+            className={tab === 'favorites' ? `${css.tab} ${css.on}` : css.tab}
+            onClick={() => setTab('favorites')}
+          >{t('tabFavorites') + (favoriteTabCount > 0 ? ' (' + favoriteTabCount + ')' : '')}</button>
           <button className={tab === 'installed' ? `${css.tab} ${css.on}` : css.tab} onClick={() => { setTab('installed'); refreshInstalled(true) }}>
             {t('tabInstalled') + (installedOtherCount > 0 ? ' (' + installedOtherCount + ')' : '')}
             {hasUpdates && <StateDot state="error" size={7} className={css.dot} />}
@@ -3912,6 +4107,101 @@ export function MarketSection(props: MarketSectionProps) {
                         )}
                   </>
                 )
+          : tab === 'favorites'
+            ? data === null
+              ? <div className={css.loading}><span className={css.logoMark}><MarketLogo size={26} animated /></span>{t('loading')}</div>
+              : favoriteUrls.length === 0
+                ? <div className={css.empty}>{t('favoritesEmpty')}</div>
+                : (
+                    <>
+                      <div className={css.themeToolbar}>
+                        <Input
+                          className={css.themeSearch}
+                          icon={<IconSearchOutline16 size={14} />}
+                          placeholder={t('searchFavoritesPh')}
+                          value={qFavorites}
+                          onChange={e => setQFavorites(e.target.value)}
+                        />
+                        <div className={css.themeToolbarActions}>
+                          <FilterMenu
+                            sortField={favSortField}
+                            sortDir={favSortDir}
+                            timeRange={favTimeRange}
+                            onSortField={setFavSortField}
+                            onSortDir={setFavSortDir}
+                            onTimeRange={setFavTimeRange}
+                            t={t}
+                          />
+                        </div>
+                      </div>
+                      {favoriteListed.length === 0
+                        ? favoritesAllStale
+                          ? (
+                              <div className={css.favoritesStaleOnly}>
+                                <div className={css.empty}>{t('favoritesStaleEmpty')}</div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  disabled={clearingStale}
+                                  onClick={() => clearStaleFavorites()}
+                                >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
+                              </div>
+                            )
+                          : <div className={css.empty}>{t('empty')}</div>
+                        : (
+                            <>
+                              {favoriteStale.length > 0 && (
+                                <div className={css.favoritesStaleBar}>
+                                  <span>{t('favoritesStaleNote').replace('{0}', String(favoriteStale.length))}</span>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={clearingStale}
+                                    onClick={() => clearStaleFavorites()}
+                                  >{clearingStale ? t('favoritesClearingStale') : t('favoritesClearStale')}</Button>
+                                </div>
+                              )}
+                              <div className={css.themeResultBar}>
+                                <span>{t('favoritesResultCount').replace('{0}', String(favoriteListed.length))}</span>
+                              </div>
+                              {favoritePlugins.length > 0 && (
+                                <>
+                                  <h3 className={css.favoritesSectionHead}>
+                                    {t('favoritesPluginsSection').replace('{0}', String(favoritePlugins.length))}
+                                  </h3>
+                                  <Masonry items={favoritePagePlugins} render={pluginCard} />
+                                  <Pager
+                                    currentPage={favoritePluginPagination.currentPage}
+                                    totalPages={favoritePluginPagination.totalPages}
+                                    pageSize={favoritePluginPagination.pageSize}
+                                    onGoToPage={favoritePluginPagination.goToPage}
+                                    onChangePageSize={favoritePluginPagination.changePageSize}
+                                    t={t}
+                                  />
+                                </>
+                              )}
+                              {favoriteThemes.length > 0 && (
+                                <>
+                                  <h3 className={css.favoritesSectionHead}>
+                                    {t('favoritesThemesSection').replace('{0}', String(favoriteThemes.length))}
+                                  </h3>
+                                  <div className={css.themeGallery}>
+                                    {favoritePageThemes.map(themePluginCard)}
+                                  </div>
+                                  <Pager
+                                    currentPage={favoriteThemePagination.currentPage}
+                                    totalPages={favoriteThemePagination.totalPages}
+                                    pageSize={favoriteThemePagination.pageSize}
+                                    onGoToPage={favoriteThemePagination.goToPage}
+                                    onChangePageSize={favoriteThemePagination.changePageSize}
+                                    t={t}
+                                  />
+                                </>
+                              )}
+                            </>
+                          )}
+                    </>
+                  )
           : tab === 'themes' && themeSnap !== null
             ? (
                 <>
@@ -4740,6 +5030,9 @@ export function MarketSection(props: MarketSectionProps) {
       )}
       {exportState === 'fail' && (
         <Toast text={t('exportLogFail')} icon={<IconWarningOutline16 size={14} />} onDone={exportToastDone} />
+      )}
+      {favoriteError !== null && (
+        <Toast text={favoriteError} icon={<IconWarningOutline16 size={14} />} onDone={favoriteErrorDone} />
       )}
       {toggled !== null && (
         <Toast

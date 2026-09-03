@@ -360,10 +360,12 @@ const hot = vi.hoisted(() => ({
   regionAuto: undefined as true | undefined,
   githubProxy: undefined as string | undefined,
   notes: {} as Record<string, string>,
+  favorites: [] as string[],
   failNext: false,
 }))
 vi.mock('../src/hot.ts', () => ({
   MAX_NOTE: 200,
+  MAX_FAVORITES: 500,
   cleanHotDir: () => {},
   readDisabledThemes: () => hot.disabled,
   writeDisabledThemes: (_dir: string, set: Set<string>) => { hot.disabled = new Set(set) },
@@ -372,8 +374,12 @@ vi.mock('../src/hot.ts', () => ({
   readMarketState: () => ({
     disabled: hot.disabled, groups: hot.groups, groupOrder: hot.groupOrder,
     channel: hot.channel, region: hot.region, regionAuto: hot.regionAuto,
+<<<<<<< HEAD
+    notes: hot.notes, favorites: hot.favorites,
+=======
     githubProxy: hot.githubProxy,
     notes: hot.notes,
+>>>>>>> origin/main
   }),
   // Carries `channel` because the real one does. A stand-in that silently
   // drops a field cannot fail when the code under test forgets to persist
@@ -382,8 +388,12 @@ vi.mock('../src/hot.ts', () => ({
   writeMarketState: (_dir: string, state: {
     disabled: Set<string>; groups: Record<string, string[]>; groupOrder: string[]
     channel?: 'stable' | 'beta' | 'dev'; region?: 'global' | 'china'; regionAuto?: true
+<<<<<<< HEAD
+    notes?: Record<string, string>; favorites?: string[]
+=======
     githubProxy?: string
     notes?: Record<string, string>
+>>>>>>> origin/main
   }) => {
     hot.disabled = new Set(state.disabled)
     hot.groups = state.groups
@@ -393,6 +403,7 @@ vi.mock('../src/hot.ts', () => ({
     if (Object.prototype.hasOwnProperty.call(state, 'regionAuto')) hot.regionAuto = state.regionAuto
     if (Object.prototype.hasOwnProperty.call(state, 'githubProxy')) hot.githubProxy = state.githubProxy
     if (state.notes !== undefined) hot.notes = state.notes
+    if (state.favorites !== undefined) hot.favorites = state.favorites
   },
   listHotMounts: () => [...hot.mounts],
   hotMount: (_ctx: unknown, _dir: string, name: string) => {
@@ -595,6 +606,7 @@ beforeEach(() => {
   hot.regionAuto = undefined
   hot.githubProxy = undefined
   hot.notes = {}
+  hot.favorites = []
   regionProbe.pending = null
   hot.failNext = false
   bed = createTestbed()
@@ -3967,5 +3979,68 @@ describe('the dev channel is an ordinary choice', () => {
   it('still refuses a cross-origin selection', async () => {
     expect((await bed.dispatch('POST', '/dsh-market/channel', { channel: 'dev' }, { crossOrigin: true })).status).toBe(403)
     expect(hot.channel).toBeUndefined()
+  })
+})
+
+describe('favorites (#414)', () => {
+  it('adds and removes a catalog url and returns it from GET /installed', async () => {
+    const url = 'https://github.com/o/dsh-loop'
+    const add = await bed.dispatch('POST', '/dsh-market/favorite', { url, favorited: true })
+    expect(add.status).toBe(200)
+    expect(add.json.favorites).toEqual([url])
+    expect(hot.favorites).toEqual([url])
+
+    const listed = await bed.dispatch('GET', '/dsh-market/installed')
+    expect(listed.json.favorites).toEqual([url])
+
+    const remove = await bed.dispatch('POST', '/dsh-market/favorite', { url, favorited: false })
+    expect(remove.status).toBe(200)
+    expect(remove.json.favorites).toEqual([])
+    expect(hot.favorites).toEqual([])
+  })
+
+  it('rejects invalid urls and cross-origin writes', async () => {
+    expect((await bed.dispatch('POST', '/dsh-market/favorite', { url: '', favorited: true })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/favorite', { url: 'ftp://bad', favorited: true })).status).toBe(400)
+    expect((await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/o/x', favorited: true }, { crossOrigin: true })).status).toBe(403)
+  })
+
+  it('a disable toggle does not clear favorites', async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    await bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/h/dsh-share', favorited: true })
+    await bed.dispatch('POST', '/dsh-market/toggle', { name: 'dsh-loop', enabled: false })
+    expect(hot.favorites).toEqual(['https://github.com/h/dsh-share'])
+  })
+
+  it('rejects favorites beyond MAX_FAVORITES', async () => {
+    hot.favorites = Array.from({ length: 500 }, (_, index) => `https://github.com/o/p-${index}`)
+    const add = await bed.dispatch('POST', '/dsh-market/favorite', { url: 'https://github.com/o/one-more', favorited: true })
+    expect(add.status).toBe(400)
+    expect(hot.favorites).toHaveLength(500)
+  })
+
+  it('queues favorite writes while an install is running', async () => {
+    fake.npm['dsh-loop'] = {
+      latest: '1.0.0',
+      versions: { '1.0.0': { manifest: { dsh: {}, main: 'lib/index.js' }, artifacts: ['lib/index.js'] } },
+    }
+    let release!: () => void
+    fake.gate = new Promise<void>((resolvePromise) => { release = resolvePromise })
+    const install = bed.dispatch('POST', '/dsh-market/install', { url: 'https://github.com/o/dsh-loop' })
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 20))
+    const favorite = bed.dispatch('POST', '/dsh-market/favorite', {
+      url: 'https://github.com/o/dsh-share',
+      favorited: true,
+    })
+    release()
+    fake.gate = null
+    expect((await install).status).toBe(200)
+    const fav = await favorite
+    expect(fav.status).toBe(200)
+    expect(fav.json.favorites).toEqual(['https://github.com/o/dsh-share'])
   })
 })

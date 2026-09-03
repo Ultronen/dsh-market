@@ -40,6 +40,10 @@ function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
     const body = init?.body ? JSON.parse(String(init.body)) : undefined
     fetchCalls.push({ path, method, body })
     const payload =
+<<<<<<< HEAD
+      route === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY }
+      : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [] }
+=======
       route === '/dsh-market/registry' ? { source: 'live', registry: REGISTRY, hostVersion: '0.1.2-alpha.2' }
       : route === '/dsh-market/discovery-compatibility' ? {
           hostVersion: '0.1.2-alpha.2',
@@ -48,10 +52,12 @@ function stubFetch(overrides: Record<string, unknown> = {}, mountPath = '') {
           }])),
         }
       : route === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [] }
+>>>>>>> origin/main
       : route === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', restart: true, installed: {} }
       : route === '/dsh-market/updates' ? { updates: {} }
       : route === '/dsh-market/toggle' ? { ok: true, disabled: [], live: [], activation: {} }
       : route === '/dsh-market/groups' ? { ok: true, groups: {}, groupOrder: [], disabled: [] }
+      : route === '/dsh-market/favorite' ? { ok: true, favorites: [] }
       : null
     const merged = overrides[path] ?? overrides[route] ?? payload
     if (merged === null) return Promise.reject(new Error(`unstubbed fetch: ${String(input)}`))
@@ -1792,6 +1798,83 @@ describe('long installed names stay readable (#342, #343)', () => {
     expect(cell.textContent).toBe(LONG)
     const link = cell.querySelector('a')
     if (link !== null) expect(link.getAttribute('title')).toBe(LONG)
+  })
+})
+
+describe('favorites (#414)', () => {
+  function favoritesStub(initial: string[] = []) {
+    const state = { favorites: [...initial] }
+    stubFetch({
+      '/dsh-market/installed': () => ({
+        profile: 'web', installed: {}, live: [], disabled: [], groups: {}, groupOrder: [], favorites: [...state.favorites],
+      }),
+      '/dsh-market/favorite': (body: any) => {
+        const url = String(body.url)
+        if (body.favorited === true) {
+          if (!state.favorites.includes(url)) state.favorites.push(url)
+        } else {
+          state.favorites = state.favorites.filter(entry => entry !== url)
+        }
+        return { ok: true, favorites: [...state.favorites] }
+      },
+    })
+    return state
+  }
+
+  it('bookmarks a discover card and POSTs favorited:true', async () => {
+    favoritesStub()
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    const card = screen.getByText('Loop task runner').closest('[class*="card"]') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: en.favoriteAdd }))
+    await waitFor(() => {
+      const call = fetchCalls.find(c => c.path === '/dsh-market/favorite')
+      expect(call?.body).toEqual({ url: 'https://github.com/alice/dsh-loop', favorited: true })
+    })
+    expect(screen.getByRole('button', { name: en.favoriteRemove })).toBeTruthy()
+  })
+
+  it('lists only favorited plugins on the favorites tab', async () => {
+    favoritesStub(['https://github.com/bob/dsh-notify'])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('dsh-notify')
+    expect(screen.queryByText('dsh-loop')).toBeNull()
+  })
+
+  it('removing a favorite drops it from the favorites tab', async () => {
+    const state = favoritesStub(['https://github.com/alice/dsh-loop'])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: en.favoriteRemove }))
+    await waitFor(() => expect(state.favorites).toEqual([]))
+    expect(screen.getByText(en.favoritesEmpty)).toBeTruthy()
+  })
+
+  it('groups favorites into plugin and theme sections', async () => {
+    favoritesStub([
+      'https://github.com/alice/dsh-loop',
+      'https://github.com/carol/whale-skin',
+    ])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    await screen.findByText('dsh-loop')
+    await screen.findByText('whale-skin')
+    expect(screen.getByText(en.favoritesPluginsSection.replace('{0}', '1'))).toBeTruthy()
+    expect(screen.getByText(en.favoritesThemesSection.replace('{0}', '1'))).toBeTruthy()
+  })
+
+  it('shows stale empty state when every favorite left the catalog', async () => {
+    favoritesStub(['https://github.com/ghost/removed-plugin'])
+    render(<MarketSection {...props()} />)
+    await screen.findByText('dsh-loop')
+    fireEvent.click(screen.getByRole('button', { name: re(en.tabFavorites) }))
+    expect(await screen.findByText(en.favoritesStaleEmpty)).toBeTruthy()
+    expect(screen.getByRole('button', { name: en.favoritesClearStale })).toBeTruthy()
   })
 })
 

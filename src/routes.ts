@@ -15,7 +15,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { load as loadYaml } from 'js-yaml'
 import { forgetCatalog, loadRegistry, pluginCategories } from './registry.ts'
 import {
-  cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_NOTE,
+  cleanHotDir, hotMount, hotUnmount, listHotMounts, MAX_FAVORITES, MAX_NOTE,
   mountClientOnlyDeps, purgeMarketState, readMarketState, writeMarketState,
 } from './hot.ts'
 import { createGroup, deleteGroup, removeFromGroups, renameGroup, setGroupMembers } from './groups.ts'
@@ -377,8 +377,12 @@ export function mountMarketRoutes(
     marketState.channel = fresh.channel
     marketState.region = fresh.region
     marketState.regionAuto = fresh.regionAuto
+<<<<<<< HEAD
+    marketState.favorites = fresh.favorites
+=======
     marketState.githubProxy = fresh.githubProxy
     setCustomGithubProxy(fresh.githubProxy ?? null)
+>>>>>>> origin/main
   }
 
   // Client-only packages (dsh.client without dsh.bundle) are invisible to the
@@ -413,6 +417,17 @@ export function mountMarketRoutes(
   let mutationBusy = false
   /** The shared mutation chain: every mutating operation appends to it. */
   let mutationChain: Promise<unknown> = Promise.resolve()
+
+  /**
+   * Append a lightweight state write to the mutation chain without answering
+   * 409 when another operation is in flight. Favorites are catalog bookmarks
+   * only — they must stay editable while an install runs (#414).
+   */
+  async function withMutationQueued<T>(fn: () => Promise<T> | T): Promise<T> {
+    const run = mutationChain.then(async () => fn())
+    mutationChain = run.catch(() => undefined)
+    return await run
+  }
 
   /**
    * Run a mutating operation under the shared mutation lock. `kind` selects
@@ -1602,6 +1617,7 @@ export function mountMarketRoutes(
           groups,
           groupOrder,
           notes: readMarketState(activeProfileDir).notes ?? {},
+          favorites: readMarketState(activeProfileDir).favorites ?? [],
           patch: { disables: patch.disables, forced: patch.forced, inserts: patch.inserts },
           patchDisabled: patchFlags.disabled,
           patchForced: patchFlags.forced,
@@ -2112,6 +2128,59 @@ export function mountMarketRoutes(
             writeMarketState(activeProfileDir, { ...state, notes })
             refreshMarketState()
             sendJson(response, 200, { ok: true, notes })
+          })
+        } catch (error) {
+          sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+        }
+      },
+    }),
+
+    host.webServer.register({
+      kind: 'exact',
+      path: '/dsh-market/favorite',
+      handler: async (request, response) => {
+        if (request.method !== 'POST') {
+          response.writeHead(405, { allow: 'POST' })
+          response.end()
+          return
+        }
+        if (!sameOrigin(request)) {
+          sendJson(response, 403, { error: 'untrusted origin' })
+          return
+        }
+        try {
+          await withMutationQueued(async () => {
+            const body = (await readJsonBody(request)) as { url?: unknown; favorited?: unknown } | null
+            const url = typeof body?.url === 'string' ? body.url.trim() : ''
+            if (url === '' || (!url.startsWith('http://') && !url.startsWith('https://'))) {
+              sendJson(response, 400, { error: 'url is required / 需要有效的 http(s) url' })
+              return
+            }
+            const state = readMarketState(activeProfileDir)
+            const favorites = [...(state.favorites ?? [])]
+            const favorited = body?.favorited === true
+            if (favorited) {
+              if (favorites.includes(url)) {
+                sendJson(response, 200, { ok: true, favorites })
+                return
+              }
+              if (favorites.length >= MAX_FAVORITES) {
+                sendJson(response, 400, {
+                  error: `favorites limit reached (${String(MAX_FAVORITES)}) / 收藏已达上限（${String(MAX_FAVORITES)}）`,
+                })
+                return
+              }
+              favorites.push(url)
+            } else {
+              const index = favorites.indexOf(url)
+              if (index !== -1) favorites.splice(index, 1)
+            }
+            // Re-read immediately before write so a concurrent install cannot
+            // leave us holding a stale disabled/groups snapshot (#414).
+            const fresh = readMarketState(activeProfileDir)
+            writeMarketState(activeProfileDir, { ...fresh, favorites })
+            refreshMarketState()
+            sendJson(response, 200, { ok: true, favorites })
           })
         } catch (error) {
           sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
