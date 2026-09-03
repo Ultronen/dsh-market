@@ -103,8 +103,10 @@ describe('CommentsModal', () => {
     expect(en.commentsNote).toContain('giscus.app')
     expect(zh.commentsNote).toContain('giscus.app')
     expect(screen.getByText(en.commentsLoginHint)).toBeTruthy()
-    expect(en.commentsLoginHint).toContain('local dsh web')
-    expect(zh.commentsLoginHint).toContain('本地 dsh web')
+    expect(en.commentsLoginHint).toContain('nothing is broken')
+    expect(en.commentsLoginHint).toContain('GitHub')
+    expect(zh.commentsLoginHint).toContain('不是故障')
+    expect(zh.commentsLoginHint).toContain('GitHub')
   })
 })
 
