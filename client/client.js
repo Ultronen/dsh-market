@@ -1860,6 +1860,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 			}).sort((a, b) => b.score - a.score || a.candidate.order - b.candidate.order).slice(0, MAX_SCREENSHOTS).map((item) => item.candidate.src);
 		}
 		const readmeShotsCache = /* @__PURE__ */ new Map();
+		/** Clear README-derived media at the boundary of an accepted catalog generation. */
+		function resetScreenshotsCache() {
+			readmeShotsCache.clear();
+		}
 		/**
 		* Screenshot candidates for a plugin: the registry's curated list when
 		* present, otherwise lazily extracted and semantically ranked from README.
@@ -5323,6 +5327,11 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 		}
 		const measuredThemePreviewTasks = /* @__PURE__ */ new Map();
 		const measuredThemePreviewResults = /* @__PURE__ */ new Map();
+		/** Clear measured theme media at the boundary of an accepted catalog generation. */
+		function resetThemePreviewCache() {
+			measuredThemePreviewTasks.clear();
+			measuredThemePreviewResults.clear();
+		}
 		/** README fetch + geometry probes, shared across search/page remounts. */
 		function measuredThemePreview(plugin) {
 			const cached = measuredThemePreviewTasks.get(plugin.url);
@@ -6263,6 +6272,10 @@ window.__ModuleLoader__.load({ id: "dshmarket", factory: (require) => {
 					return body;
 				}).then((body) => {
 					if (body.registry === void 0) throw new Error("the catalog response carried no data");
+					if (body.registry.updated !== cachedRegistry?.updated) {
+						resetScreenshotsCache();
+						resetThemePreviewCache();
+					}
 					cachedRegistry = body.registry;
 					setData(body.registry);
 					setHostVersion(typeof body.hostVersion === "string" ? body.hostVersion : null);

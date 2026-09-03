@@ -731,6 +731,129 @@ describe('MarketSection (jsdom)', () => {
     })
   })
 
+  it('preserves README media for the same catalog generation and refreshes a newer one (#439)', async () => {
+    const pluginUrl = 'https://github.com/bob/dsh-notify'
+    const readmeUrl = 'https://raw.githubusercontent.com/bob/dsh-notify/HEAD/README.md'
+    const oldShot = 'https://raw.githubusercontent.com/bob/dsh-notify/HEAD/assets/old.png'
+    const newShot = 'https://raw.githubusercontent.com/bob/dsh-notify/HEAD/assets/new.png'
+    let registryCalls = 0
+    let readmeCalls = 0
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      const path = String(url).split('?')[0]
+      if (path === '/dsh-market/registry') {
+        registryCalls += 1
+        const registry = JSON.parse(JSON.stringify(REGISTRY))
+        const sameGeneration = registryCalls <= 2
+        registry.updated = sameGeneration ? '2026-09-03T00:00:00Z' : '2026-09-03T01:00:00Z'
+        registry.plugins = [{
+          ...registry.plugins[1],
+          url: pluginUrl,
+          category: 'theme',
+          description: {
+            en: registryCalls === 1
+              ? 'First catalog generation'
+              : registryCalls === 2 ? 'Same catalog generation' : 'Second catalog generation',
+            zh: '',
+          },
+        }]
+        return Promise.resolve(new Response(JSON.stringify({ source: 'live', registry }), { status: 200 }))
+      }
+      const payload =
+        path === '/dsh-market/installed' ? { profile: 'web', installed: {}, live: [], disabled: [] }
+        : path === '/dsh-market/status' ? { active: false, pnpm: true, boot: 'boot-1', installed: {} }
+        : path === '/dsh-market/updates' ? { updates: {} }
+        : null
+      if (payload !== null) return Promise.resolve(new Response(JSON.stringify(payload), { status: 200 }))
+      if (path === readmeUrl) {
+        readmeCalls += 1
+        const filename = readmeCalls === 1 ? 'old.png' : 'new.png'
+        return Promise.resolve(new Response(`## Screenshots\n![Plugin screenshot](assets/${filename})`, { status: 200 }))
+      }
+      return Promise.reject(new Error(`unstubbed fetch: ${String(url)}`))
+    }))
+    class ProbeImage {
+      naturalWidth = 427
+      naturalHeight = 240
+      onload: (() => void) | null = null
+      onerror: (() => void) | null = null
+      referrerPolicy = ''
+      decoding = ''
+      set src(_value: string) { queueMicrotask(() => this.onload?.()) }
+    }
+    vi.stubGlobal('Image', ProbeImage)
+    const themeSnapshot = { preference: 'light', themes: [] as Array<{ id: string }> }
+    const componentProps = {
+      ...props(),
+      themeStore: { subscribe: () => () => {}, getSnapshot: () => themeSnapshot },
+    }
+
+    const installButton = () => {
+      let card: HTMLElement | null = screen.getByText('dsh-notify')
+      while (card !== null && within(card).queryAllByRole('button', { name: en.install }).length === 0) {
+        card = card.parentElement
+      }
+      return within(card!).getByRole('button', { name: en.install })
+    }
+    const dialogHasShot = (shot: string) => {
+      const encoded = encodeURIComponent(shot.replace(/^https?:\/\//, ''))
+      return [...screen.getByRole('dialog').querySelectorAll('img')]
+        .some(image => image.src.includes(encoded))
+    }
+
+    const closeDialog = async () => {
+      fireEvent.click(screen.getByRole('button', { name: en.cancel }))
+      await waitFor(() => expect(screen.queryByRole('button', { name: en.confirmInstall })).toBeNull())
+    }
+    const themeCoverHasShot = (shot: string) => {
+      const encoded = encodeURIComponent(shot.replace(/^https?:\/\//, ''))
+      return screen.getByRole('button', { name: `${en.themePreview} dsh-notify` })
+        .querySelector('img')?.src.includes(encoded) === true
+    }
+
+    const first = render(<MarketSection {...componentProps} />)
+    await screen.findByText('First catalog generation')
+    fireEvent.click(installButton())
+    await screen.findByRole('button', { name: en.confirmInstall })
+    await waitFor(() => expect(dialogHasShot(oldShot)).toBe(true))
+    await closeDialog()
+
+    // Opening the same dialog again within one catalog generation is still
+    // a cache hit; accepting a new catalog is the invalidation boundary.
+    fireEvent.click(installButton())
+    await screen.findByRole('button', { name: en.confirmInstall })
+    await waitFor(() => expect(dialogHasShot(oldShot)).toBe(true))
+    expect(readmeCalls).toBe(1)
+    await closeDialog()
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0]!)
+    await waitFor(() => expect(themeCoverHasShot(oldShot)).toBe(true))
+    first.unmount()
+
+    // A successful reload of the same generation preserves both caches.
+    const same = render(<MarketSection {...componentProps} />)
+    await screen.findByText('Same catalog generation')
+    fireEvent.click(installButton())
+    await screen.findByRole('button', { name: en.confirmInstall })
+    await waitFor(() => expect(dialogHasShot(oldShot)).toBe(true))
+    expect(readmeCalls).toBe(1)
+    await closeDialog()
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0]!)
+    await waitFor(() => expect(themeCoverHasShot(oldShot)).toBe(true))
+    same.unmount()
+
+    render(<MarketSection {...componentProps} />)
+    await screen.findByText('Second catalog generation')
+    fireEvent.click(installButton())
+    await screen.findByRole('button', { name: en.confirmInstall })
+    await waitFor(() => expect(dialogHasShot(newShot)).toBe(true))
+    expect(dialogHasShot(oldShot)).toBe(false)
+    await closeDialog()
+    fireEvent.click(screen.getAllByRole('button', { name: en.tabThemes })[0]!)
+    await waitFor(() => expect(themeCoverHasShot(newShot)).toBe(true))
+    expect(themeCoverHasShot(oldShot)).toBe(false)
+    expect(registryCalls).toBe(3)
+    expect(readmeCalls).toBe(2)
+  })
+
   it('falls through bad raw routes, rejects a 200 HTML error page, and reuses the winner', async () => {
     setGithubRoutes({
       raw: ['https://bad.example', 'https://html.example', null],

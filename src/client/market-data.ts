@@ -76,6 +76,8 @@ export function pluginCategories(plugin: Pick<RegistryPlugin, 'category'>): stri
 
 /** The catalog payload under `registry` in /dsh-market/registry. */
 export interface Registry {
+  /** Catalog generation marker; unchanged payload generations share caches. */
+  updated: string
   count: number
   categories: Record<string, LocalizedText>
   plugins: RegistryPlugin[]
@@ -1146,7 +1148,7 @@ export function rankThemeScreenshots(
 
 const readmeShotsCache = new Map<string, Promise<ScreenshotCandidate[]>>()
 
-/** Test hook: the cache is module-level and outlives component unmounts. */
+/** Clear README-derived media at the boundary of an accepted catalog generation. */
 export function resetScreenshotsCache(): void {
   readmeShotsCache.clear()
 }
