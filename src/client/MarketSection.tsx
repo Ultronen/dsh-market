@@ -1155,6 +1155,12 @@ export interface MarketSectionProps {
   preferredSubsectionId?: string
 }
 
+interface SourceMigrationConfirm {
+  name: string
+  source: string
+  target: string
+}
+
 export function MarketSection(props: MarketSectionProps) {
   const t = props.t
   const initialWebdav = useMemo(savedWebdav, [])
@@ -1355,6 +1361,8 @@ export function MarketSection(props: MarketSectionProps) {
   // Local link:/file: restore — a modal asks before swapping to the catalog.
   const [restoreConfirm, setRestoreConfirm] = useState<{ name: string; entry: RegistryPlugin } | null>(null)
   const [restoreBlocked, setRestoreBlocked] = useState<{ name: string; reason: 'no-catalog' | 'repo-mismatch' } | null>(null)
+  // Snapshot the source switch the user agreed to review; later renders must not change it under the dialog.
+  const [migrationConfirm, setMigrationConfirm] = useState<SourceMigrationConfirm | null>(null)
 
   /** Determinate percent parsed from pnpm's Progress line, when available. */
   const [progressPct, setProgressPct] = useState<number | null>(null)
@@ -2344,6 +2352,7 @@ export function MarketSection(props: MarketSectionProps) {
     // one kept it — the rest failed silently with no way forward (#255).
     setStaleName(prev => (prev === name ? null : prev))
     setRestoreConfirm(prev => (prev?.name === name ? null : prev))
+    setMigrationConfirm(null)
     setUpdatingName(name)
     updateIdleStrikes.current = 0
     // Mirror the install flow's dshm-pending marker: closing the config page
@@ -2432,12 +2441,72 @@ export function MarketSection(props: MarketSectionProps) {
       })
   }, [refreshInstalled, t])
 
+
+  const doSourceMigration = useCallback((name: string) => {
+    setInstallError(null)
+    setActivationWarnings([])
+    setMigrationConfirm(null)
+    setUpdatingName(name)
+    return fetch(api('/dsh-market/migrate-source'), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+      .then(res => res.json().then(body => ({ status: res.status, body })))
+      .then(({ status, body }) => {
+        setUpdatingName(null)
+        if (status === 200 && body.ok === true) {
+          const targetName = typeof body.to?.name === 'string' ? body.to.name : name
+          setUpdatedNames(names => names.includes(targetName) ? names : names.concat(targetName))
+          if (body.activation && typeof body.activation === 'object') {
+            setActivations(prev => ({ ...prev, ...body.activation }))
+          }
+          refreshInstalled(true)
+          const warnings = Array.isArray(body.warnings) ? body.warnings.map(String).filter(Boolean) : []
+          if (warnings.length > 0) setInstallError(warnings.join('\n'))
+          return
+        }
+        if (status === 409 && body.agentsBusy === true) {
+          const running = Array.isArray(body.runningAgents) && body.runningAgents.length > 0 ? ` (${body.runningAgents.join(', ')})` : ''
+          setInstallError(t('agentBusyUpdate') + running)
+          return
+        }
+        setInstallError(t('migrateFail') + ': ' + String(body.error || ('HTTP ' + String(status))))
+      })
+      .catch(error => {
+        setUpdatingName(null)
+        setInstallError(t('migrateFail') + ': ' + String(error))
+      })
+  }, [refreshInstalled, t])
+
+  const askSourceMigration = useCallback((name: string) => {
+    const migration = updates[name]?.sourceMigration
+    const source = installed[name]
+
+    setStaleName(null)
+    setRestoreConfirm(null)
+    setRestoreBlocked(null)
+    setInstallError(null)
+
+    if (migration === undefined || source === undefined) {
+      setMigrationConfirm(null)
+      return
+    }
+
+    setMigrationConfirm({
+      name,
+      source: String(source),
+      target: migration.target,
+    })
+  }, [installed, updates])
+
   const askRestore = useCallback((name: string) => {
     if (data === null) return
     const spec = installed[name]
     if (spec === undefined) return
     const specText = String(spec)
     setStaleName(null)
+    setMigrationConfirm(null)
     setRestoreBlocked(null)
     if (/^(?:link|file):/i.test(specText)) {
       const resolved = resolveCatalogRestore(
@@ -4703,6 +4772,14 @@ export function MarketSection(props: MarketSectionProps) {
                                     — already ellipsizing since #234 — is what gives up
                                     width first. */}
                                 <span className={css.irowTrailing}>
+                                {!missing && status?.sourceMigration !== undefined && (
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    disabled={updatingName !== null || removingName !== null || busyUrl !== null}
+                                    onClick={() => askSourceMigration(name)}
+                                  >{t('migrateNpm')}</Button>
+                                )}
                                 {missing
                                   ? <span className={css.metaTag}>{t('notInstalled')}</span>
                                   : updatedNames.includes(name)
@@ -4866,6 +4943,53 @@ export function MarketSection(props: MarketSectionProps) {
           onClose={() => setLightbox(null)}
           t={t}
         />
+      )}
+      {migrationConfirm !== null && (
+        <Modal
+          open
+          onClose={() => setMigrationConfirm(null)}
+          title={t('migrateTitle')}
+          description={t('migrateDescription')}
+          footer={(
+            <>
+              <Button
+                variant="ghost"
+                onClick={() => setMigrationConfirm(null)}
+              >
+                {t('cancel')}
+              </Button>
+              <Button
+                variant="primary"
+                disabled={updatingName !== null}
+                onClick={() => doSourceMigration(migrationConfirm.name)}
+              >
+                {t('migrateContinue')}
+              </Button>
+            </>
+          )}
+        >
+          <div className={css.migrationSources}>
+            <div className={css.migrationSource}>
+              <span className={css.migrationLabel}>
+                {t('migrateCurrentSource')}
+              </span>
+              <code>
+                {migrationConfirm.name}: {migrationConfirm.source}
+              </code>
+            </div>
+            <div className={css.migrationArrow}>↓</div>
+            <div className={css.migrationSource}>
+              <span className={css.migrationLabel}>
+                {t('migrateTargetSource')}
+              </span>
+              <code>{migrationConfirm.target}</code>
+            </div>
+          </div>
+          <p className={css.migrationWarning}>
+            <IconWarningOutline16 size={14} />
+            {t('migrateWarning')}
+          </p>
+        </Modal>
       )}
       {removeConfirm !== null && (
         <Modal
