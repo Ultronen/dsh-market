@@ -42,8 +42,8 @@ import type { OperationRecord } from './operations.ts'
 import { Diagnostics } from './Diagnostics.tsx'
 import { clientDiagnostics } from './self-check.ts'
 import {
-  api, avatarColor, entryForDep, githubProxyInUse, githubUrl, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
-  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, safeScreenshots, setGithubProxy, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
+  api, applyGithubRouting, avatarColor, entryForDep, githubRouteCandidates, groupSwitchState, humanOutput, installedForCatalog, isInstalled, looksTerminal, matchInstalledName, orderedCategories, pluginCategories,
+  formatCount, pageItems, pluginName, pluginScreenshotCandidates, pluginScreenshots, rankThemeScreenshots, readSession, rememberGithubRoute, safeScreenshots, themePlugins as themePluginsOf, themeSwatch, TIME_RANGE_DAYS, visiblePlugins,
 } from './market-data.ts'
 import type {
 ActivationInfo, ActivationState, GistExportResult, InstalledMap, InstalledRepoHints, InstalledRepoIdentities, MarketStatus, Registry, RegistryPlugin,
@@ -388,8 +388,10 @@ function renderMarkdown(md: string): Array<JSX.Element | string> {
   return out
 }
 
-function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
+/** Avatar fallback advances one service route at a time before using initials. */
+export function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
   const [failed, setFailed] = useState(false)
+  const [routeIndex, setRouteIndex] = useState(0)
   if (failed || owner === '') {
     return (
       <div className={css.av} style={{ background: avatarColor(name) }}>
@@ -397,13 +399,22 @@ function OwnerAvatar({ name, owner }: { name: string; owner: string }) {
       </div>
     )
   }
+  const candidates = githubRouteCandidates(
+    'avatar',
+    `https://avatars.githubusercontent.com/${encodeURIComponent(owner)}?size=96`,
+  )
+  const candidate = candidates[Math.min(routeIndex, candidates.length - 1)]!
   return (
     <img
       className={css.av}
-      src={avatarUrl(owner)}
+      src={candidate.url}
       alt=""
       loading="lazy"
-      onError={() => setFailed(true)}
+      onLoad={() => rememberGithubRoute('avatar', candidate.proxy)}
+      onError={() => {
+        if (routeIndex + 1 < candidates.length) setRouteIndex(routeIndex + 1)
+        else setFailed(true)
+      }}
     />
   )
 }
@@ -496,26 +507,6 @@ function thumbUrl(src: string, height: number): string {
   // around it would have traded a working request for a bigger one, on a
   // page that makes dozens of them.
   return `https://images.weserv.nl/?url=${encodeURIComponent(src.replace(/^https?:\/\//, ''))}&h=${String(height)}&fit=inside&we=1`
-}
-
-/**
- * The owner's GitHub avatar, addressed so the region's proxy can serve it.
- *
- * `github.com/<owner>.png` is a redirect to the avatar host, and gh-proxy
- * does not follow it — measured from an unproxied mainland connection, that
- * URL hangs until the client gives up (60s), while naming the avatar host
- * directly through the same proxy answers in 1.07s. So a proxied region
- * addresses the destination itself.
- *
- * The redirect is left in place when there is no proxy: it is the form that
- * has always worked, and this is not the release to change it on a path
- * nobody has reported a problem with.
- */
-function avatarUrl(owner: string): string {
-  const name = encodeURIComponent(owner)
-  return githubProxyInUse() === null
-    ? `https://github.com/${name}.png?size=96`
-    : githubUrl(`https://avatars.githubusercontent.com/${name}?size=96`)
 }
 
 /**
@@ -1662,7 +1653,7 @@ export function MarketSection(props: MarketSectionProps) {
         // page draws from is a larger request through the same server, so it
         // lands later; and if it ever did not, the status poll re-renders
         // within seconds and the images correct themselves.
-        setGithubProxy(typeof status.githubProxy === 'string' ? status.githubProxy : null)
+        applyGithubRouting(status)
         if (typeof status.boot === 'string') {
           setBootId(status.boot)
           setIgnoredUpdateNames(ignoredUpdatesForBoot(status.boot))

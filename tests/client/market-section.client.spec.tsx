@@ -10,8 +10,10 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { MarketSection, resetMarketPortalHost, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
-import { resetScreenshotsCache } from '../../src/client/market-data.ts'
+import { MarketSection, OwnerAvatar, resetMarketPortalHost, resetThemePreviewCache } from '../../src/client/MarketSection.tsx'
+import {
+  pluginScreenshotCandidates, resetGithubRouting, resetScreenshotsCache, setGithubRoutes,
+} from '../../src/client/market-data.ts'
 import { en } from '../../src/client/locales.ts'
 
 const REGISTRY = {
@@ -102,11 +104,12 @@ function rankedNames(container: HTMLElement): Array<string | undefined> {
   return out
 }
 
-beforeEach(() => { stubFetch(); resetScreenshotsCache(); resetThemePreviewCache() })
+beforeEach(() => { stubFetch(); resetGithubRouting(); resetScreenshotsCache(); resetThemePreviewCache() })
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
   sessionStorage.clear()
+  resetGithubRouting()
 })
 
 describe('api() base resolution (#345)', () => {
@@ -725,6 +728,82 @@ describe('MarketSection (jsdom)', () => {
       const extracted = 'https://raw.githubusercontent.com/bob/dsh-notify/HEAD/assets/notify.png'
       expect(srcs.some(src => src?.includes(encodeURIComponent(extracted.replace(/^https?:\/\//, ''))))).toBe(true)
     })
+  })
+
+  it('falls through bad raw routes, rejects a 200 HTML error page, and reuses the winner', async () => {
+    setGithubRoutes({
+      raw: ['https://bad.example', 'https://html.example', null],
+      avatar: [null],
+    })
+    const calls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: string | URL) => {
+      const url = String(input)
+      calls.push(url)
+      if (url.startsWith('https://bad.example/')) return new Response('down', { status: 502 })
+      if (url.startsWith('https://html.example/')) {
+        return new Response('<html><title>proxy error</title></html>', {
+          status: 200, headers: { 'content-type': 'text/html' },
+        })
+      }
+      return new Response('# plugin\n![preview](assets/demo.png)', {
+        status: 200, headers: { 'content-type': 'text/plain' },
+      })
+    }))
+
+    const first = await pluginScreenshotCandidates({
+      name: 'one', owner: 'alice', url: 'https://github.com/alice/one', screenshots: [],
+    } as never)
+    expect(first[0]?.src).toBe('https://raw.githubusercontent.com/alice/one/HEAD/assets/demo.png')
+    expect(calls).toHaveLength(3)
+
+    calls.length = 0
+    resetScreenshotsCache()
+    await pluginScreenshotCandidates({
+      name: 'two', owner: 'alice', url: 'https://github.com/alice/two', screenshots: [],
+    } as never)
+    expect(calls).toHaveLength(1)
+    expect(calls[0]).toBe('https://raw.githubusercontent.com/alice/two/HEAD/README.md')
+  })
+
+  it('times out one hung README route without consuming the direct fallback', async () => {
+    vi.useFakeTimers()
+    try {
+      setGithubRoutes({ raw: ['https://hung.example', null], avatar: [null] })
+      let attempts = 0
+      vi.stubGlobal('fetch', vi.fn((_input: string | URL, init?: RequestInit) => {
+        attempts++
+        if (attempts === 1) {
+          return new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () => { reject(new DOMException('aborted', 'AbortError')) })
+          })
+        }
+        return Promise.resolve(new Response('# plugin\n![preview](assets/demo.png)', { status: 200 }))
+      }))
+      const pending = pluginScreenshotCandidates({
+        name: 'timeout', owner: 'alice', url: 'https://github.com/alice/timeout', screenshots: [],
+      } as never)
+      await vi.advanceTimersByTimeAsync(6000)
+      await expect(pending).resolves.toHaveLength(1)
+      expect(attempts).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('tries avatar routes in order and remembers the one that loads', () => {
+    setGithubRoutes({ raw: [null], avatar: ['https://bad.example', 'https://good.example', null] })
+    const first = render(<OwnerAvatar name="dsh-loop" owner="alice" />)
+    let avatar = first.container.querySelector('img')!
+    expect(avatar.src).toContain('https://bad.example/https://avatars.githubusercontent.com/alice')
+    fireEvent.error(avatar)
+    avatar = first.container.querySelector('img')!
+    expect(avatar.src).toContain('https://good.example/https://avatars.githubusercontent.com/alice')
+    fireEvent.load(avatar)
+    first.unmount()
+
+    const second = render(<OwnerAvatar name="dsh-notify" owner="bob" />)
+    avatar = second.container.querySelector('img')!
+    expect(avatar.src).toContain('https://good.example/https://avatars.githubusercontent.com/bob')
   })
 
   it('imports a backup as a grey installed-list preview without restoring it', async () => {
